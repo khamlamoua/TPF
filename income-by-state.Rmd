@@ -1,0 +1,131 @@
+---
+title: "income-by-state"
+author: "Khamla Moua"
+date: "2025-11-05"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading Packages
+
+```{r}
+#load tidyverse for graphing
+library(tidyverse)
+
+#load here for reading csv file
+library(here)
+
+#packages for making heat maps (NOT LOADED)
+library(dplyr)
+library(maps)
+library(ggplot2)
+library(viridis)
+
+#packages for making better heat map
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(rnaturalearthhires)
+```
+
+## Reading file and removing/skipping non-data entries
+
+```{r}
+#get path to income csv file
+income_file_path <- here("income-by-state.csv")
+
+#reads file and skips first 3 lines (title & description)
+income_data <- read_csv(income_file_path, skip=3)
+glimpse(income_data)
+
+#writes new file without first 3 lines
+write_csv(income_data, file=here("income-by-state-clean.csv"))
+
+#path to new income file
+income_file_path <- here("income-by-state-clean.csv")
+
+#skipping last 8 rows and creating a new file
+income_data <- readLines(income_file_path)
+total_rows <-length(income_data)
+rows_to_skip <- 9
+rows_to_read <- total_rows - rows_to_skip
+
+income_data <- read_csv(income_file_path, n_max=rows_to_read)
+
+write_csv(income_data, file=here("income-by-state-clean.csv"))
+
+#skipping 2nd row
+income_file_path <- here("income-by-state-clean.csv")
+income_data <- readLines(income_file_path)
+
+skip_second <- income_data[-c(2, 3)]
+
+income_data <- read.csv(textConnection(skip_second), header = TRUE, stringsAsFactors = FALSE)
+
+write_csv(income_data, file=here("income-by-state-clean.csv"))
+
+#skips second column
+income_data <- read_csv(income_file_path, col_select = -2)
+
+write_csv(income_data, file=here("income-by-state-clean.csv"))
+
+#*removing and relabeling columns
+
+#removing col 2
+income_file_path <- here("income-by-state-clean.csv")
+income_data <- read.csv(income_file_path)
+
+income_data[, 3] <- income_data[, 3] - 1
+
+write_csv(income_data, file=here("income-by-state-clean.csv"))
+
+#relabeling col 2 & 3
+income_file_path <- here("income-by-state-clean.csv")
+income_data <- read.csv(income_file_path)
+
+income_data <- income_data %>% rename(rank = "Rank.within.US..of.52.states.",
+median_income = "Value..Dollars.", state = "State")
+
+write_csv(income_data, file=here("income-by-state-clean.csv"))
+
+#lowercase state names
+income_file_path <- here("income-by-state-clean.csv")
+income_data <- read_csv(income_file_path)
+income_data <- income_data %>% mutate(state = tolower(state))
+
+write_csv(income_data, file=here("income-by-state-clean.csv"))
+```
+
+## Plotting
+
+```{r}
+income_file_path <- here("income-by-state-clean.csv")
+income_data <- read_csv(income_file_path)
+
+#load u.s. states map data
+tates_map <- map_data("state")
+
+map_tesst <- merge(states_map, income_data, by.x = "region", by.y ="state")
+
+ggplot(map_test, aes(long, lat, group = group, fill = median_income)) + geom_polygon(color = "white", linewidth = 0.1) + scale_fill_viridis(option = "plasma", name = "Median Income") + coord_fixed(1.3) + theme_void() + labs(title = "Median Income by State")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
