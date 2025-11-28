@@ -1,6 +1,6 @@
 ---
 title: "completejourney"
-author: "Khamla Moua"
+author: "Team"
 date: "2025-11-21"
 output: pdf_document
 ---
@@ -40,9 +40,65 @@ glimpse(demographics)
 
 # Editing/Sorting data
 ```{r}
-# merging transactions with product_id from the products data and then by household_id from the demographics dataset
+# checking for NA percentage
+na_percent <- function(df) {
+  sapply(df, function(x) mean(is.na(x)) * 100)
+}
 
-customer_data <- transactions |> left_join(products, by = "product_id") |> left_join(demographics, by = "household_id")
+na_percent(transactions)
+na_percent(products)
+na_percent(demographics)
+
+# removing NA values in package_category, package_type + removing package_size, home_ownership, marital_status
+
+products_clean <- products |> filter( # removes NA(s)
+  !is.na(product_category),
+  !is.na(product_type)
+  ) |> select( # keeps only listed columns
+    product_id,
+    manufacturer_id,
+    department,
+    brand,
+    product_category,
+    product_type
+  )
+
+demographics_clean <- demographics |> select(
+  household_id,
+  age,
+  income,
+  household_size,
+  household_comp,
+  kids_count
+)
+
+# check NA values again
+na_percent(transactions)
+na_percent(products_clean)
+na_percent(demographics_clean)
+
+
+# now merge transactions with the products data and the demographics dataset
+
+customer_data <- transactions |> left_join(products_clean, by = "product_id") |> left_join(demographics_clean, by = "household_id")
+
+na_percent(customer_data)
+
+# removing rows with missing demographic and product info
+customer_data <- customer_data |> filter(
+  !is.na(age),
+  !is.na(income),
+  !is.na(household_size)
+)
+
+customer_data <- customer_data |> filter(
+  !is.na(product_category),
+  !is.na(product_type),
+  !is.na(manufacturer_id)
+)
+
+na_percent(customer_data)
+
 
 # creating time features: year, month, week, day of week + seasons: winter, spring, summer, fall
 
@@ -54,21 +110,42 @@ customer_data <- customer_data |> mutate(
   day_of_week = wday(transaction_timestamp, label = TRUE),
 
   seasons = case_when(
-    month %in% c(12, 1, 2) ~ "winter",
-    month %in% c(3, 4, 5) ~ "spring",
-    month %in% c(6, 7, 8) ~ "summer",
-    month %in% c(9, 10, 11) ~ "fall"
+    month %in% c(12, 1, 2) ~ "Winter",
+    month %in% c(3, 4, 5) ~ "Spring",
+    month %in% c(6, 7, 8) ~ "Summer",
+    month %in% c(9, 10, 11) ~ "Fall"
   )
-)
+) |> select(-transaction_timestamp)
 
-# checks for percentage of NA
-customer_data |> summarize(
-  pct_na_income = mean(is.na(income)) * 100,
-  pct_na_age = mean(is.na(age)) * 100,
-  pct_na_marital = mean(is.na(marital_status)) * 100
-)
+#reordering the dataset
+customer_data <- customer_data %>%
+  select(
+    household_id,
+    store_id,
+    basket_id,
+    product_id,
+    quantity,
+    sales_value,
+    retail_disc,
+    coupon_disc,
+    coupon_match_disc,
+    year,
+    month,
+    week,
+    day_of_week,
+    seasons,
+    manufacturer_id,
+    department,
+    brand,
+    product_category,
+    product_type,
+    age,
+    income,
+    household_size,
+    household_comp,
+    kids_count
+  )
 
 #NOTE: I am uploading the markdown to GitHub in increments so the one you have will have less than what I have.
 
 ```
-
