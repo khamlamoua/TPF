@@ -1,0 +1,74 @@
+---
+title: "completejourney"
+author: "Khamla Moua"
+date: "2025-11-21"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading Packages
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(ggplot2)
+  library(here)
+  library(completejourney)
+  
+  # we have not seen much of these packages in class so I included a summary
+  library(lubridate) #standardizes and converts dates into usable data
+  library(janitor) #easier cleaner for duplicates, NA(s), and inconsistencies
+})
+```
+
+# Taking a look at the "Complete Journey" dataset
+```{r}
+# Note: use the glimpse function with:
+# "transactions_sample" to see spending/purchasing info
+# "products" to see product info
+# "demographics" to see household info
+
+transactions <- transactions_sample
+products <- products
+demographics <- demographics
+glimpse(transactions)
+glimpse(products)
+glimpse(demographics)
+```
+
+# Editing/Sorting data
+```{r}
+# merging transactions with product_id from the products data and then by household_id from the demographics dataset
+
+customer_data <- transactions |> left_join(products, by = "product_id") |> left_join(demographics, by = "household_id")
+
+# creating time features: year, month, week, day of week + seasons: winter, spring, summer, fall
+
+customer_data <- customer_data |> mutate(
+  transaction_timestamp = ymd_hms(transaction_timestamp),
+  year = year(transaction_timestamp),
+  month = month(transaction_timestamp),
+  week = week(transaction_timestamp),
+  day_of_week = wday(transaction_timestamp, label = TRUE),
+
+  seasons = case_when(
+    month %in% c(12, 1, 2) ~ "winter",
+    month %in% c(3, 4, 5) ~ "spring",
+    month %in% c(6, 7, 8) ~ "summer",
+    month %in% c(9, 10, 11) ~ "fall"
+  )
+)
+
+# checks for percentage of NA
+customer_data |> summarize(
+  pct_na_income = mean(is.na(income)) * 100,
+  pct_na_age = mean(is.na(age)) * 100,
+  pct_na_marital = mean(is.na(marital_status)) * 100
+)
+
+#NOTE: I am uploading the markdown to GitHub in increments so the one you have will have less than what I have.
+
+```
+
