@@ -30,9 +30,10 @@ suppressPackageStartupMessages({
 # "products" to see product info
 # "demographics" to see household info
 
-transactions <- transactions_sample
+transactions <- get_transactions()
 products <- products
 demographics <- demographics
+promotions <- get_promotions()
 glimpse(transactions)
 glimpse(products)
 glimpse(demographics)
@@ -48,13 +49,14 @@ na_percent <- function(df) {
 na_percent(transactions)
 na_percent(products)
 na_percent(demographics)
+na_percent(promotions)
 
-# removing NA values in package_category, package_type + removing package_size, home_ownership, marital_status
+# removing NA values in package_category, package_type + removing package_size, home_ownership, marital_status -- cleaning
 
-products_clean <- products |> filter( # removes NA(s)
+products_clean <- products %>% filter( # removes NA(s)
   !is.na(product_category),
   !is.na(product_type)
-  ) |> select( # keeps only listed columns
+  ) %>% select( # keeps only listed columns
     product_id,
     manufacturer_id,
     department,
@@ -63,7 +65,7 @@ products_clean <- products |> filter( # removes NA(s)
     product_type
   )
 
-demographics_clean <- demographics |> select(
+demographics_clean <- demographics %>% select(
   household_id,
   age,
   income,
@@ -72,37 +74,53 @@ demographics_clean <- demographics |> select(
   kids_count
 )
 
+#group promotions into one singular per store ID per day instead of having multiple promotions per store ID per day.
+promotions <- promotions %>% group_by(product_id, store_id, week) %>% summarize(
+  any_display = any(!is.na(display_location)),
+  any_mailer = any(!is.na(mailer_location)),
+  .groups = "drop" # tells r to return an ungrouped data frame after summarizing
+)
+
 # check NA values again
-na_percent(transactions)
 na_percent(products_clean)
 na_percent(demographics_clean)
-
+na_percent(promotions)
 
 # now merge transactions with the products data and the demographics dataset
 
-customer_data <- transactions |> left_join(products_clean, by = "product_id") |> left_join(demographics_clean, by = "household_id")
+customer_data <- transactions %>%
+  left_join(products_clean, by = "product_id") %>%
+  left_join(demographics_clean, by = "household_id") %>%
+  left_join(promotions, by = c("product_id", "store_id", "week"))
 
 na_percent(customer_data)
 
-# removing rows with missing demographic and product info
-customer_data <- customer_data |> filter(
+# removing rows with missing demographic and product info -- cleaning
+customer_data <- customer_data %>% filter(
   !is.na(age),
   !is.na(income),
   !is.na(household_size)
 )
 
-customer_data <- customer_data |> filter(
+customer_data <- customer_data %>% filter(
   !is.na(product_category),
   !is.na(product_type),
   !is.na(manufacturer_id)
 )
+
+# promotions had a high number of NA = days when there were no promotions -- so we change NA (days with no promotion) to FALSE values
+customer_data <- customer_data %>% mutate(
+  any_display = if_else(is.na(any_display), FALSE, any_display),
+  any_mailer = if_else(is.na(any_display), FALSE, any_display)
+)
+
 
 na_percent(customer_data)
 
 
 # creating time features: year, month, week, day of week + seasons: winter, spring, summer, fall
 
-customer_data <- customer_data |> mutate(
+customer_data <- customer_data %>% mutate(
   transaction_timestamp = ymd_hms(transaction_timestamp),
   year = year(transaction_timestamp),
   month = month(transaction_timestamp),
@@ -115,9 +133,9 @@ customer_data <- customer_data |> mutate(
     month %in% c(6, 7, 8) ~ "Summer",
     month %in% c(9, 10, 11) ~ "Fall"
   )
-) |> select(-transaction_timestamp)
+) %>% select(-transaction_timestamp)
 
-#reordering the dataset
+#reordering the data set
 customer_data <- customer_data %>%
   select(
     household_id,
@@ -129,23 +147,79 @@ customer_data <- customer_data %>%
     retail_disc,
     coupon_disc,
     coupon_match_disc,
+    
     year,
     month,
     week,
     day_of_week,
     seasons,
+    
     manufacturer_id,
     department,
     brand,
     product_category,
     product_type,
+    
     age,
     income,
     household_size,
     household_comp,
-    kids_count
+    kids_count,
+    
+    any_display,
+    any_mailer
   )
 
-#NOTE: I am uploading the markdown to GitHub in increments so the one you have will have less than what I have.
+# creating age groups, income brackets, household size, total spend & quanity per basket, customer-level summarizations
 
+#before proceeding, I want to check what entries/groups are being used in the original data
+levels(customer_data$age)
+levels(customer_data$income)
+levels(customer_data$household_size)
+
+#proceeding cleaning into new data frame = "customer_data_clean"
+customer_data_clean <- customer_data %>% mutate(
+  age = case_when(
+    age %in% c("19-24", "25-34") ~ "18-34",
+    age %in% c("35-44", "45-54") ~ "35-54",
+    age %in% c("55-64", "65+") ~ "55+",
+    TRUE ~ "Unknown"
+  )
+) %>% mutate(
+  income = case_when(
+    income %in% c("Under 15K", "15-24K", "25-34K", "35-49K") ~ "Low Income",
+    income %in% c("50-74K", "75-99K", "100-124K") ~ "Middle Income",
+    income %in% c("125-149K", "150-174K", "175-199K", "200-249K", "250K+") ~ "High Income",
+    TRUE ~ "Unknown"
+  )
+) %>% mutate(
+  household_size = case_when(
+    household_size %in% c("1", "2") ~ "1-2",
+    household_size %in% c("3", "4") ~ "3-4",
+    household_size %in% c("5+") ~ "5+",
+    TRUE ~ "Unknown"
+  )
+) %>% select(-household_comp, -kids_count, -brand, -product_type)
+
+customer_summary <- customer_data_clean %>% group_by(household_id, basket_id) %>% mutate(
+  basket_total_spend = sum(sales_value, na.rm = TRUE),
+  basket_total_quanity = sum(quantity, na.rm = TRUE),
+  basket_season = mode(seasons)
+) %>% ungroup() %>% group_by(household_id) %>% summarise(
+  age = first(age),
+  income = first(income),
+  household_size = first(household_size),
+  
+  total_spend = sum(basket_total_spend, na.rm = TRUE),
+  total_quantity = sum(basket_total_quanity, na.rm = TRUE),
+  avg_quanity_per_trip = mean(basket_total_quanity, na.rm = TRUE),
+  num_trips = n_distinct(basket_id),
+  promo_rate = mean(any_display == 1 | any_mailer == 1),
+  fav_season = mode(seasons)
+)
+
+
+
+#Note to Khamla: cmd + shift + m = %>% 
+#NOTE: I am uploading the markdown to GitHub in increments so the one you have will have less than what I have.
 ```
