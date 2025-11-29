@@ -34,6 +34,7 @@ transactions <- get_transactions()
 products <- products
 demographics <- demographics
 promotions <- get_promotions()
+
 glimpse(transactions)
 glimpse(products)
 glimpse(demographics)
@@ -69,16 +70,32 @@ demographics_clean <- demographics %>% select(
   household_id,
   age,
   income,
-  household_size,
-  household_comp,
-  kids_count
+  household_size
 )
+
+
+# creating time features: year, month, week, day of week + seasons: winter, spring, summer, fall
+
+transactions <- transactions %>% mutate(
+  transaction_timestamp = ymd_hms(transaction_timestamp),
+  year = year(transaction_timestamp),
+  month = month(transaction_timestamp),
+  week = week(transaction_timestamp),
+  day_of_week = wday(transaction_timestamp, label = TRUE),
+
+  seasons = case_when(
+    month %in% c(12, 1, 2) ~ "Winter",
+    month %in% c(3, 4, 5) ~ "Spring",
+    month %in% c(6, 7, 8) ~ "Summer",
+    month %in% c(9, 10, 11) ~ "Fall"
+  )
+) %>% select(-transaction_timestamp)
 
 #group promotions into one singular per store ID per day instead of having multiple promotions per store ID per day.
 promotions <- promotions %>% group_by(product_id, store_id, week) %>% summarize(
   any_display = any(!is.na(display_location)),
   any_mailer = any(!is.na(mailer_location)),
-  .groups = "drop" # tells r to return an ungrouped data frame after summarizing
+  .groups = "drop" # tells r to return an ungroup data frame after summarizing
 )
 
 # check NA values again
@@ -111,74 +128,37 @@ customer_data <- customer_data %>% filter(
 # promotions had a high number of NA = days when there were no promotions -- so we change NA (days with no promotion) to FALSE values
 customer_data <- customer_data %>% mutate(
   any_display = if_else(is.na(any_display), FALSE, any_display),
-  any_mailer = if_else(is.na(any_display), FALSE, any_display)
+  any_mailer = if_else(is.na(any_mailer), FALSE, any_mailer)
 )
-
 
 na_percent(customer_data)
 
 
-# creating time features: year, month, week, day of week + seasons: winter, spring, summer, fall
+#establishing a weight_department and removing them bc they complicate quatity and sales
 
-customer_data <- customer_data %>% mutate(
-  transaction_timestamp = ymd_hms(transaction_timestamp),
-  year = year(transaction_timestamp),
-  month = month(transaction_timestamp),
-  week = week(transaction_timestamp),
-  day_of_week = wday(transaction_timestamp, label = TRUE),
+weight_departments <- c("MEAT-PCKGD", "MEAT", "PRODUCE", "DELI", "SEAFOOD-PCKGD")
 
-  seasons = case_when(
-    month %in% c(12, 1, 2) ~ "Winter",
-    month %in% c(3, 4, 5) ~ "Spring",
-    month %in% c(6, 7, 8) ~ "Summer",
-    month %in% c(9, 10, 11) ~ "Fall"
-  )
-) %>% select(-transaction_timestamp)
-
-#reordering the data set
 customer_data <- customer_data %>%
-  select(
-    household_id,
-    store_id,
-    basket_id,
-    product_id,
-    quantity,
-    sales_value,
-    retail_disc,
-    coupon_disc,
-    coupon_match_disc,
-    
-    year,
-    month,
-    week,
-    day_of_week,
-    seasons,
-    
-    manufacturer_id,
-    department,
-    brand,
-    product_category,
-    product_type,
-    
-    age,
-    income,
-    household_size,
-    household_comp,
-    kids_count,
-    
-    any_display,
-    any_mailer
-  )
+  filter(!(department %in% weight_departments))
 
-# creating age groups, income brackets, household size, total spend & quanity per basket, customer-level summarizations
+#there are $0 sales with 0 purchase quantity, removing those
+customer_data_clean <- customer_data %>%
+    filter(sales_value > 0,
+           quantity > 0)
+
+#checking for outliers in new dataset
+summary(customer_data_clean$quantity)
+quantile(customer_data_clean$quantity, probs = c(0.99,0.995,0.999), na.rm = TRUE)
+
+# creating age groups, income brackets, household size, total spend & quantity per basket, customer-level summarizations
 
 #before proceeding, I want to check what entries/groups are being used in the original data
-levels(customer_data$age)
-levels(customer_data$income)
-levels(customer_data$household_size)
+unique(customer_data$age)
+unique(customer_data$income)
+unique(customer_data$household_size)
 
 #proceeding cleaning into new data frame = "customer_data_clean"
-customer_data_clean <- customer_data %>% mutate(
+customer_data_clean <- customer_data_clean %>% mutate(
   age = case_when(
     age %in% c("19-24", "25-34") ~ "18-34",
     age %in% c("35-44", "45-54") ~ "35-54",
@@ -199,27 +179,143 @@ customer_data_clean <- customer_data %>% mutate(
     household_size %in% c("5+") ~ "5+",
     TRUE ~ "Unknown"
   )
-) %>% select(-household_comp, -kids_count, -brand, -product_type)
+)
 
-customer_summary <- customer_data_clean %>% group_by(household_id, basket_id) %>% mutate(
+#removing extreme outliers
+customer_data_clean <- customer_data_clean %>%
+    filter(quantity <= 40)
+
+basket_level <- customer_data_clean %>% group_by(household_id, basket_id) %>% summarize(
   basket_total_spend = sum(sales_value, na.rm = TRUE),
-  basket_total_quanity = sum(quantity, na.rm = TRUE),
-  basket_season = mode(seasons)
-) %>% ungroup() %>% group_by(household_id) %>% summarise(
+  basket_total_quantity = sum(quantity, na.rm = TRUE),
+  seasons = first(seasons),
   age = first(age),
   income = first(income),
   household_size = first(household_size),
-  
-  total_spend = sum(basket_total_spend, na.rm = TRUE),
-  total_quantity = sum(basket_total_quanity, na.rm = TRUE),
-  avg_quanity_per_trip = mean(basket_total_quanity, na.rm = TRUE),
-  num_trips = n_distinct(basket_id),
-  promo_rate = mean(any_display == 1 | any_mailer == 1),
-  fav_season = mode(seasons)
+  .groups = "drop"
+)
+
+customer_summary <- basket_level %>% group_by(household_id) %>% summarize(
+  age = first(age),
+  income = first(income),
+  household_size = first(household_size),
+    
+  total_spend = sum(basket_total_spend),
+  total_quantity = sum(basket_total_quantity),
+  num_trips = n(),
+  avg_quantity_per_trip = total_quantity / num_trips,
+  avg_basket_value = total_spend / num_trips,
+  fav_season = names(which.max(table(seasons)))
 )
 
 
 
-#Note to Khamla: cmd + shift + m = %>% 
+#readr::write_csv(customer_summary, "customer_summary.csv")
+#readr::write_csv(customer_data_clean, "customer_data_clean.csv")
+
+
+#Note to self: cmd + shift + m = %>% 
 #NOTE: I am uploading the markdown to GitHub in increments so the one you have will have less than what I have.
 ```
+
+#Visualizations by Income
+```{r}
+#vis 1 - bar chart : avg total spend by inc group
+customer_summary %>%
+  group_by(income) %>%
+  summarize(avg_total_spend = mean(total_spend)) %>%
+  ggplot(aes(x = income, y = avg_total_spend, fill = income)) +
+  geom_col() +
+  labs(
+    title = "Average Total Spending by Income Group",
+    x = "Income Group",
+    y = "Average Total Spend ($)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+# higher inc households spend the most
+# mid inc households spend less
+# low inc households spend the least
+# = income is positively related to total spending
+
+#vis 2 - bar chart : avg num of trips by inc group
+customer_summary %>%
+  group_by(income) %>%
+  summarize(avg_trips = mean(num_trips)) %>%
+  ggplot(aes(x = income, y = avg_trips, fill = income)) +
+  geom_col() +
+  labs(
+    title = "Average Number of Grocery Trips by Income Group",
+    x = "Income Group",
+    y = "Average Number of Trips"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+# higher inc households take more total trips
+# low inc households take fewer
+# = more frequent shopping among higher-income customers
+```
+
+#Visualizations by Age
+```{r}
+#vis 1 - avg total spend by age group
+customer_summary %>%
+  group_by(age) %>%
+  summarise(avg_spend = mean(total_spend)) %>%
+  ggplot(aes(x = age, y = avg_spend, fill = age)) +
+  geom_col() +
+  labs(
+    title = "Average Spending by Age Group",
+    subtitle = "Older age groups tend to spend more overall",
+    x = "Age Group",
+    y = "Average Total Spend ($)"
+  ) +
+  theme_minimal()
+
+#vis 2 - avg num of trips by age
+customer_summary %>%
+  group_by(age) %>%
+  summarise(avg_trips = mean(num_trips)) %>%
+  ggplot(aes(x = age, y = avg_trips, fill = age)) +
+  geom_col() +
+  labs(
+    title = "Shopping Frequency Across Age Groups",
+    subtitle = "Which ages shop most often?",
+    x = "Age Group",
+    y = "Average Number of Trips"
+  ) +
+  theme_minimal()
+
+```
+
+#Visualization by Household Size
+```{r}
+#vis 1 - total spend by household size
+customer_summary %>%
+  group_by(household_size) %>%
+  summarise(avg_spend = mean(total_spend)) %>%
+  ggplot(aes(x = household_size, y = avg_spend, fill = household_size)) +
+  geom_col() +
+  labs(
+    title = "Average Spending by Household Size",
+    subtitle = "Larger households tend to spend more overall",
+    x = "Household Size",
+    y = "Average Total Spend ($)"
+  ) +
+  theme_minimal()
+
+#vis 2 - num of trips by household size
+customer_summary %>%
+  group_by(household_size) %>%
+  summarise(avg_trips = mean(num_trips)) %>%
+  ggplot(aes(x = household_size, y = avg_trips, fill = household_size)) +
+  geom_col() +
+  labs(
+    title = "Shopping Frequency by Household Size",
+    subtitle = "Do larger households shop more often?",
+    x = "Household Size",
+    y = "Average Number of Trips"
+  ) +
+  theme_minimal()
+```
+
